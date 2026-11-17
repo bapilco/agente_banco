@@ -1,0 +1,36 @@
+{
+  "products": {
+    "cuenta_ahorros": {
+      "display_name": "Cuenta de Ahorros",
+      "required_documents": [
+        "Cédula de identidad (anverso y reverso)",
+        "Planilla de servicio básico (máximo 3 meses de antigüedad)",
+        "Formulario de conocimiento del cliente (KYC)"
+      ]
+    },
+    "cuenta_corriente": {
+      "display_name": "Cuenta Corriente",
+      "required_documents": [
+        "Cédula de identidad (anverso y reverso)",
+        "Planilla de servicio básico (máximo 3 meses de antigüedad)",
+        "Formulario de conocimiento del cliente (KYC)",
+        "Referencia bancaria o comercial",
+        "Registro de firmas"
+      ]
+    },
+    "tarjeta_credito": {
+      "display_name": "Tarjeta de Crédito",
+      "required_documents": [
+        "Cédula de identidad (anverso y reverso)",
+        "Planilla de servicio básico (máximo 3 meses de antigüedad)",
+        "Formulario de conocimiento del cliente (KYC)",
+        "Certificado de ingresos o 3 últimos roles de pago",
+        "Autorización de consulta al buró de crédito"
+      ]
+    }
+  },
+  "enhanced_due_diligence_documents": [
+    "Declaración jurada de origen lícito de fondos",
+    "Justificación documentada de ingresos (últimos 6 meses)"
+  ]
+}

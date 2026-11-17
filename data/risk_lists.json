@@ -1,0 +1,11 @@
+{
+  "_comment": "Listas de riesgo simuladas (datos ficticios).",
+  "high_risk": [
+    {"list": "OFAC_SIMULADA", "name": "Carlos Riesgo Alto", "document_id": "1799999999"},
+    {"list": "UAFE_SIMULADA", "name": "Lucia Sancionada Ficticia", "document_id": "1788888888"}
+  ],
+  "watch_list": [
+    {"list": "PEP_SIMULADA", "name": "Maria Observada", "document_id": "1755555555"},
+    {"list": "PEP_SIMULADA", "name": "Pedro Expuesto Politico", "document_id": "1744444444"}
+  ]
+}
