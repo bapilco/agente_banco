@@ -1,0 +1,8 @@
+# Dependencias de la Lambda (solo Bedrock; sin Ollama, Uvicorn ni librerías de pruebas)
+fastapi==0.162.5
+mangum==0.22.0
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+langgraph==1.2.22
+langchain-core==1.7.7
+langchain-aws==1.9.3

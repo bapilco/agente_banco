@@ -6,6 +6,7 @@ langgraph==1.2.22
 langchain-core==1.7.7
 langchain-ollama==1.1.0
 langchain-aws==1.9.3
+mangum==0.22.0
 
 # pruebas
 pytest==9.2.0

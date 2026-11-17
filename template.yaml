@@ -1,0 +1,122 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Agente orquestador de onboarding digital (LangGraph) desplegado en AWS Lambda (imagen de
+  contenedor) y expuesto mediante Amazon API Gateway (HTTP API). En la nube el LLM es
+  Claude Haiku 5.5 en Amazon Bedrock.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-haiku-5-5
+    Description: >
+      ID que usa la aplicación para invocar el modelo. Si tu cuenta/región usa inference
+      profiles, usa el ID con prefijo (p. ej. us.anthropic.claude-haiku-5-5).
+  BedrockFoundationModelId:
+    Type: String
+    Default: anthropic.claude-haiku-5-5
+    Description: ID base del modelo (sin prefijo de región), usado para acotar los permisos IAM.
+  AgentTimeoutSeconds:
+    Type: Number
+    Default: 8
+    Description: >
+      Timeout por intento de cada agente. API Gateway corta la integración a los 30 s, así que
+      se mantiene bajo para que los reintentos quepan en ese límite.
+  AgentRetryBackoffSeconds:
+    Type: Number
+    Default: 0.3
+  IdentityConfidenceThreshold:
+    Type: Number
+    Default: 0.8
+  MockFailureRate:
+    Type: Number
+    Default: 0
+    Description: Probabilidad de fallo simulado de las tools mock (0 en ambientes reales).
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+  ThrottlingRateLimit:
+    Type: Number
+    Default: 10
+  ThrottlingBurstLimit:
+    Type: Number
+    Default: 20
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 1024
+    Architectures:
+      - x86_64
+
+Resources:
+  OnboardingApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      Description: API de onboarding digital
+      DefaultRouteSettings:
+        ThrottlingRateLimit: !Ref ThrottlingRateLimit
+        ThrottlingBurstLimit: !Ref ThrottlingBurstLimit
+
+  OnboardingFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-onboarding
+      RetentionInDays: !Ref LogRetentionDays
+
+  OnboardingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Orquestador LangGraph de onboarding (identidad -> riesgo -> documentación -> respuesta)
+      PackageType: Image
+      LoggingConfig:
+        LogGroup: !Ref OnboardingFunctionLogGroup
+      Environment:
+        Variables:
+          # En la nube el LLM SIEMPRE es Bedrock.
+          # AWS_REGION la define Lambda automáticamente (variable reservada) y la usa el cliente de Bedrock.
+          LLM_PROVIDER: bedrock
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          AGENT_MAX_RETRIES: "3"
+          AGENT_TIMEOUT_SECONDS: !Ref AgentTimeoutSeconds
+          AGENT_RETRY_BACKOFF_SECONDS: !Ref AgentRetryBackoffSeconds
+          IDENTITY_CONFIDENCE_THRESHOLD: !Ref IdentityConfidenceThreshold
+          MOCK_FAILURE_RATE: !Ref MockFailureRate
+      Policies:
+        - Statement:
+            - Sid: InvokeBedrockModel
+              Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource:
+                - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/${BedrockFoundationModelId}*
+                - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/*${BedrockFoundationModelId}*
+      Events:
+        StartOnboarding:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OnboardingApi
+            Method: POST
+            Path: /api/v1/onboarding/start
+        Health:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref OnboardingApi
+            Method: GET
+            Path: /health
+    Metadata:
+      DockerTag: python3.12-v1
+      DockerContext: .
+      Dockerfile: Dockerfile
+
+Outputs:
+  ApiBaseUrl:
+    Description: URL base de la API
+    Value: !Sub https://${OnboardingApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  OnboardingEndpoint:
+    Description: Endpoint de onboarding
+    Value: !Sub https://${OnboardingApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/api/v1/onboarding/start
+  OnboardingFunctionName:
+    Description: Nombre de la función Lambda
+    Value: !Ref OnboardingFunction

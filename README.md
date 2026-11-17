@@ -284,3 +284,134 @@ agente_banco/
 - **Riesgo `medium`**: se **aprueba con observación** (se informa en `observations` y en el `message`, con los documentos adicionales requeridos).
 - **`verified = false`**: **rechazo directo**, sin importar el valor de `confidence`. Solo si `verified = true` y `confidence < 0.8` se escala.
 - **Persistencia**: no se requiere base de datos en esta fase; el estado vive durante la petición (estado de LangGraph en memoria).
+
+---
+
+## 10. Cómo ejecutar
+
+### Instalación
+```bash
+python -m venv .venv
+.venv\Scripts\activate          # Windows  (Linux/Mac: source .venv/bin/activate)
+pip install -r requirements.txt
+copy .env.example .env          # Windows  (Linux/Mac: cp .env.example .env)
+ollama pull qwen3:1.7b          # solo si LLM_PROVIDER=ollama
+```
+
+### Iniciar el servicio con Uvicorn
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+Documentación interactiva (Swagger): http://localhost:8000/docs · Salud del servicio: http://localhost:8000/health
+
+### Ejemplo con curl
+```bash
+curl -X POST http://localhost:8000/api/v1/onboarding/start \
+  -H "Content-Type: application/json" \
+  -d '{"prospect_name": "Juan Perez", "document_id": "1712345678", "product": "cuenta_ahorros"}'
+```
+
+En **PowerShell** usa `curl.exe` (no el alias `curl`) y escapa las comillas:
+```powershell
+curl.exe -X POST http://localhost:8000/api/v1/onboarding/start -H "Content-Type: application/json" -d '{\"prospect_name\": \"Juan Perez\", \"document_id\": \"1712345678\", \"product\": \"cuenta_ahorros\"}'
+```
+
+### Datos de prueba (mocks) para cada escenario
+| Escenario | `prospect_name` | `document_id` | Resultado esperado |
+|-----------|-----------------|---------------|--------------------|
+| Aprobado | Juan Perez | 1712345678 | `APPROVED` |
+| Aprobado con observación (riesgo medio) | Maria Observada | 1755555555 | `APPROVED` + `observations` |
+| Escalado por riesgo alto | Carlos Riesgo Alto | 1799999999 | `ESCALATED` |
+| Escalado por confianza < 0.8 | Juan Perez | 1712345672 | `ESCALATED` |
+| Rechazo directo (no verificado) | Juan Perez | 1712345670 | `REJECTED` |
+| Validación previa (no son 10 dígitos) | Juan Perez | 12345 | HTTP 422, no se ejecuta ningún agente |
+| Reintentos / error tras 3 intentos | cualquiera | cualquiera | Configurar `MOCK_FAILURE_RATE=0.5` (o `1.0`) en `.env` |
+
+---
+
+## 11. Despliegue en AWS (Lambda + API Gateway + Bedrock)
+
+La misma app FastAPI se encapsula en **AWS Lambda** (con el adaptador [Mangum](https://github.com/Kludex/mangum)) y se expone con **Amazon API Gateway (HTTP API)**. La infraestructura está definida con **AWS SAM** en `template.yaml`.
+
+```
+Cliente ──HTTPS──▶ API Gateway (HTTP API) ──▶ Lambda (imagen de contenedor)
+                                               │  FastAPI + Mangum
+                                               │  LangGraph (orquestador + agentes)
+                                               └──▶ Amazon Bedrock (Claude Haiku 5.5)
+```
+
+### Archivos de despliegue
+| Archivo | Propósito |
+|---------|-----------|
+| `template.yaml` | Plantilla SAM: Lambda, HTTP API, rutas, IAM para Bedrock, logs y variables de ambiente |
+| `Dockerfile` | Imagen de la Lambda (`public.ecr.aws/lambda/python:3.12`) |
+| `requirements-lambda.txt` | Dependencias de la nube (sin Ollama, Uvicorn ni pytest) |
+| `app/lambda_handler.py` | Handler de Lambda: `Mangum(app)` |
+| `.dockerignore` | Excluye `.env`, `.venv`, `tests`, etc. de la imagen |
+
+Se usa **imagen de contenedor** (no .zip) porque las dependencias (LangGraph, LangChain, pydantic-core) incluyen binarios nativos y pesan más que el límite de un .zip; además se construyen para Linux aunque se despliegue desde Windows.
+
+### Variables de ambiente en la nube
+Las define `template.yaml`. **En la nube el LLM siempre es Bedrock**:
+
+| Variable | Valor | Origen |
+|----------|-------|--------|
+| `LLM_PROVIDER` | `bedrock` | fijo en la plantilla |
+| `BEDROCK_MODEL_ID` | `anthropic.claude-haiku-5-5` | parámetro `BedrockModelId` |
+| `AGENT_MAX_RETRIES` | `3` | fijo |
+| `AGENT_TIMEOUT_SECONDS` | `8` | parámetro `AgentTimeoutSeconds` |
+| `AGENT_RETRY_BACKOFF_SECONDS` | `0.3` | parámetro |
+| `IDENTITY_CONFIDENCE_THRESHOLD` | `0.8` | parámetro |
+| `MOCK_FAILURE_RATE` | `0` | parámetro |
+| `AWS_REGION` | región del stack | la define Lambda automáticamente (variable reservada) |
+
+El archivo `.env` **no** se incluye en la imagen; solo se usa en local.
+
+### Permisos IAM
+La Lambda solo puede invocar el modelo configurado (`bedrock:InvokeModel` y `bedrock:InvokeModelWithResponseStream`) sobre el *foundation model* y sus *inference profiles*.
+
+### Requisitos previos
+1. [AWS CLI](https://docs.aws.amazon.com/cli/) configurado (`aws configure`) y [AWS SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html) instalado.
+2. Docker en ejecución.
+3. Acceso habilitado a **Claude Haiku 5.5** en la consola de Amazon Bedrock, en la región donde se despliega.
+
+### Comandos
+```bash
+# Construir la imagen
+sam build
+
+# Primer despliegue (guiado: nombre del stack, región, parámetros; crea el repositorio ECR)
+sam deploy --guided --resolve-image-repos --capabilities CAPABILITY_IAM
+
+# Despliegues posteriores (usa samconfig.toml generado por --guided)
+sam deploy
+```
+
+Si tu cuenta requiere *inference profile*, sobreescribe el ID del modelo:
+```bash
+sam deploy --parameter-overrides BedrockModelId=us.anthropic.claude-haiku-5-5
+```
+
+Al terminar, SAM muestra las salidas `ApiBaseUrl` y `OnboardingEndpoint`.
+
+### Probar en la nube
+```bash
+curl -X POST https://<api-id>.execute-api.<region>.amazonaws.com/api/v1/onboarding/start \
+  -H "Content-Type: application/json" \
+  -d '{"prospect_name": "Juan Perez", "document_id": "1712345678", "product": "cuenta_ahorros"}'
+```
+
+Ver logs:
+```bash
+sam logs --stack-name <nombre-del-stack> --tail
+```
+
+Eliminar el stack:
+```bash
+sam delete
+```
+
+### Consideraciones
+- **Límite de 30 s de API Gateway:** la integración de HTTP API se corta a los 30 s. Por eso en la nube `AGENT_TIMEOUT_SECONDS=8`. En el peor caso (varios agentes reintentando 3 veces) el flujo puede superar ese límite y API Gateway respondería 503 aunque la Lambda termine. Si se necesita más margen, la alternativa es un flujo asíncrono (devolver `request_id` y consultar el resultado después).
+- **Autenticación:** la plantilla expone la API sin autorizador y solo con *throttling* (`ThrottlingRateLimit`/`ThrottlingBurstLimit`). Para un ambiente real se recomienda agregar un autorizador JWT/Cognito o IAM.
+- **Arranque en frío:** la primera invocación tarda más por la carga de la imagen y las librerías.
